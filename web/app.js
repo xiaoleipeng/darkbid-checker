@@ -28,7 +28,7 @@ await micropip.install('python-docx')
 
     text.textContent = '正在加载检查脚本...';
     sub.textContent = '步骤 3/3：初始化完成';
-    const resp = await fetch('checker.py');
+    const resp = await fetch('checker.py?v=' + Date.now());
     const code = await resp.text();
     await pyodide.runPythonAsync(code);
     bar.style.width = '100%';

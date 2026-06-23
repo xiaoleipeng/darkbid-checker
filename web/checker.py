@@ -77,6 +77,47 @@ def _fix_punctuation_in_run(run):
     run.text = ''.join(result)
 
 
+_RULE_NAMES = {
+    WD_LINE_SPACING.SINGLE: "单倍行距",
+    WD_LINE_SPACING.ONE_POINT_FIVE: "1.5倍行距",
+    WD_LINE_SPACING.DOUBLE: "2倍行距",
+    WD_LINE_SPACING.MULTIPLE: "多倍行距",
+    WD_LINE_SPACING.AT_LEAST: "最小值",
+    WD_LINE_SPACING.EXACTLY: "固定值",
+}
+
+
+def _describe_line_spacing(rule, spacing):
+    """根据 rule 和 spacing 值生成可读描述"""
+    if rule is None and spacing is None:
+        return "单倍行距"
+    if rule == WD_LINE_SPACING.MULTIPLE and spacing:
+        return f"{spacing:.2f}倍行距"
+    if rule == WD_LINE_SPACING.AT_LEAST and spacing:
+        return f"最小值{spacing.pt:.1f}磅"
+    if rule == WD_LINE_SPACING.EXACTLY and spacing:
+        return f"固定值{spacing.pt:.1f}磅"
+    return _RULE_NAMES.get(rule, "单倍行距")
+
+
+def _get_actual_line_spacing_desc(para):
+    """获取段落实际的行间距描述（含样式继承）"""
+    pf = para.paragraph_format
+    rule = pf.line_spacing_rule
+    spacing = pf.line_spacing
+    # 如果段落本身有设置，直接用
+    if rule is not None:
+        return _describe_line_spacing(rule, spacing)
+    # 从样式继承
+    style = para.style
+    if style and style.paragraph_format:
+        sr = style.paragraph_format.line_spacing_rule
+        ss = style.paragraph_format.line_spacing
+        if sr is not None:
+            return _describe_line_spacing(sr, ss)
+    return "单倍行距"
+
+
 def _process_runs_font_color(runs, in_table, categories):
     """批量处理 runs 的字体和颜色，返回 (fix_count, fix_descs)"""
     check_font = 'font' in categories
@@ -240,25 +281,22 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
 
         if check_spacing:
             pf = para.paragraph_format
+            # 获取实际生效的行间距（含样式继承）
+            eff_rule = pf.line_spacing_rule
+            eff_spacing = pf.line_spacing
+            if eff_rule is None:
+                style = para.style
+                if style and style.paragraph_format:
+                    eff_rule = style.paragraph_format.line_spacing_rule
+                    eff_spacing = style.paragraph_format.line_spacing
             need_fix = False
-            if pf.line_spacing_rule != WD_LINE_SPACING.EXACTLY:
-                rule_names = {WD_LINE_SPACING.SINGLE: "单倍", WD_LINE_SPACING.ONE_POINT_FIVE: "1.5倍",
-                              WD_LINE_SPACING.DOUBLE: "2倍", WD_LINE_SPACING.MULTIPLE: "多倍",
-                              WD_LINE_SPACING.AT_LEAST: "最小值"}
-                old_rule = rule_names.get(pf.line_spacing_rule, "未设置")
-                if pf.line_spacing_rule == WD_LINE_SPACING.MULTIPLE and pf.line_spacing:
-                    old_desc = f"{pf.line_spacing:.2f}倍行距"
-                elif pf.line_spacing_rule in (WD_LINE_SPACING.AT_LEAST,) and pf.line_spacing:
-                    old_desc = f"最小值{pf.line_spacing.pt:.1f}磅"
-                else:
-                    old_desc = old_rule
-                para_descs.append(f"行间距: {old_desc} → 固定值30磅")
+            if eff_rule != WD_LINE_SPACING.EXACTLY:
                 need_fix = True
-            elif pf.line_spacing is None or abs(pf.line_spacing - LINE_SPACING_VAL) > Pt(0.5):
-                old_val = f"固定值{pf.line_spacing.pt:.1f}磅" if pf.line_spacing else "未设置"
-                para_descs.append(f"行间距: {old_val} → 固定值30磅")
+            elif eff_spacing is None or abs(eff_spacing - LINE_SPACING_VAL) > Pt(0.5):
                 need_fix = True
             if need_fix:
+                old_desc = _get_actual_line_spacing_desc(para)
+                para_descs.append(f"行间距: {old_desc} → 固定值30磅")
                 pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
                 pf.line_spacing = LINE_SPACING_VAL
                 fix_count += 1

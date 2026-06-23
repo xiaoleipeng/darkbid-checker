@@ -39,6 +39,43 @@ CATEGORY_LABELS = {
     'identity': '屏蔽投标人名称、人员姓名等身份信息',
 }
 
+_RULE_NAMES = {
+    WD_LINE_SPACING.SINGLE: "单倍行距",
+    WD_LINE_SPACING.ONE_POINT_FIVE: "1.5倍行距",
+    WD_LINE_SPACING.DOUBLE: "2倍行距",
+    WD_LINE_SPACING.MULTIPLE: "多倍行距",
+    WD_LINE_SPACING.AT_LEAST: "最小值",
+    WD_LINE_SPACING.EXACTLY: "固定值",
+}
+
+
+def _describe_line_spacing(rule, spacing):
+    if rule is None and spacing is None:
+        return "单倍行距"
+    if rule == WD_LINE_SPACING.MULTIPLE and spacing:
+        return f"{spacing:.2f}倍行距"
+    if rule == WD_LINE_SPACING.AT_LEAST and spacing:
+        return f"最小值{spacing.pt:.1f}磅"
+    if rule == WD_LINE_SPACING.EXACTLY and spacing:
+        return f"固定值{spacing.pt:.1f}磅"
+    return _RULE_NAMES.get(rule, "单倍行距")
+
+
+def _get_actual_line_spacing_desc(para):
+    pf = para.paragraph_format
+    rule = pf.line_spacing_rule
+    spacing = pf.line_spacing
+    if rule is not None:
+        return _describe_line_spacing(rule, spacing)
+    style = para.style
+    if style and style.paragraph_format:
+        sr = style.paragraph_format.line_spacing_rule
+        ss = style.paragraph_format.line_spacing
+        if sr is not None:
+            return _describe_line_spacing(sr, ss)
+    return "单倍行距"
+
+
 PUNCTUATION_MAP = {
     ',': '，', '.': '。', ':': '：', ';': '；',
     '!': '！', '?': '？', '(': '（', ')': '）',
@@ -174,15 +211,28 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
         if not in_table:
             if 'spacing' in categories:
                 pf = para.paragraph_format
-                if pf.line_spacing_rule != WD_LINE_SPACING.EXACTLY or pf.line_spacing != LINE_SPACING_VAL:
-                    para_fixes.append("行间距 → 固定值30磅")
+                eff_rule = pf.line_spacing_rule
+                eff_spacing = pf.line_spacing
+                if eff_rule is None:
+                    style = para.style
+                    if style and style.paragraph_format:
+                        eff_rule = style.paragraph_format.line_spacing_rule
+                        eff_spacing = style.paragraph_format.line_spacing
+                need_fix = False
+                if eff_rule != WD_LINE_SPACING.EXACTLY:
+                    need_fix = True
+                elif eff_spacing is None or abs(eff_spacing - LINE_SPACING_VAL) > Pt(0.5):
+                    need_fix = True
+                if need_fix:
+                    old_desc = _get_actual_line_spacing_desc(para)
+                    para_fixes.append(f"行间距: {old_desc} → 固定值30磅")
                     pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
                     pf.line_spacing = LINE_SPACING_VAL
                 if pf.space_before and pf.space_before > Pt(0):
-                    para_fixes.append("段前间距 → 0")
+                    para_fixes.append(f"段前: {pf.space_before.pt:.1f}磅 → 0")
                     pf.space_before = Pt(0)
                 if pf.space_after and pf.space_after > Pt(0):
-                    para_fixes.append("段后间距 → 0")
+                    para_fixes.append(f"段后: {pf.space_after.pt:.1f}磅 → 0")
                     pf.space_after = Pt(0)
 
             if 'align' in categories:
