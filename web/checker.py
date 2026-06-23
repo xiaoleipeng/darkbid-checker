@@ -77,24 +77,25 @@ def _fix_punctuation_in_run(run):
     run.text = ''.join(result)
 
 
-def _process_runs_font_color(runs, in_table, categories, fix_count, details, details_full):
-    """批量处理 runs 的字体和颜色，返回更新后的 fix_count"""
+def _process_runs_font_color(runs, in_table, categories):
+    """批量处理 runs 的字体和颜色，返回 (fix_count, fix_descs)"""
     check_font = 'font' in categories
     check_color = 'color' in categories
+    fix_count = 0
+    fix_descs = []
 
     for run in runs:
         if not run.text.strip():
             continue
         font = run.font
-        fixed = False
 
         if check_font:
             if not in_table:
                 # 字体名
                 if font.name and font.name != FONT_NAME:
+                    fix_descs.append(f"字体: {font.name} → 宋体")
                     _set_font_name(run)
                     fix_count += 1
-                    fixed = True
                 else:
                     rpr = run._element.find(QN_WPR)
                     if rpr is not None:
@@ -102,39 +103,35 @@ def _process_runs_font_color(runs, in_table, categories, fix_count, details, det
                         if rFonts is not None:
                             ea = rFonts.get(QN_EASTASIA)
                             if ea and ea != FONT_NAME:
+                                fix_descs.append(f"中文字体: {ea} → 宋体")
                                 _set_font_name(run)
                                 fix_count += 1
-                                fixed = True
                 # 字号
                 if font.size and font.size != FONT_SIZE:
+                    fix_descs.append(f"字号: {font.size.pt:.1f}pt → 14pt(四号)")
                     font.size = FONT_SIZE
                     fix_count += 1
-                    fixed = True
             # 加粗/倾斜/下划线（表格内外均检查）
             if font.bold:
+                fix_descs.append("去除加粗")
                 font.bold = False
                 fix_count += 1
-                fixed = True
             if font.italic:
+                fix_descs.append("去除倾斜")
                 font.italic = False
                 fix_count += 1
-                fixed = True
             if font.underline:
+                fix_descs.append("去除下划线")
                 font.underline = False
                 fix_count += 1
-                fixed = True
 
         if check_color:
             if font.color and font.color.rgb and font.color.rgb != BLACK_COLOR:
+                fix_descs.append(f"颜色: #{font.color.rgb} → 黑色")
                 font.color.rgb = BLACK_COLOR
                 fix_count += 1
-                fixed = True
 
-        if fixed and details_full:
-            run_loc = ("[表格内] " if in_table else "") + (run.text[:15] + "..." if len(run.text) > 15 else run.text)
-            details.append((run_loc, "字体/颜色修复"))
-
-    return fix_count
+    return fix_count, fix_descs
 
 
 def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None, add_comments=True):
@@ -229,6 +226,7 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
     check_font_or_color = 'font' in categories or 'color' in categories
 
     # 主循环：逐段处理（跳过表格内段落，后面单独处理）
+    comment_count = 0
     for para in doc.paragraphs:
         text = para.text
         if not text.strip() or not para.runs:
@@ -238,70 +236,99 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
         if in_table:
             continue  # 表格内段落在下面统一处理
 
-        para_fixed = False
+        para_descs = []
 
         if check_spacing:
             pf = para.paragraph_format
             need_fix = False
             if pf.line_spacing_rule != WD_LINE_SPACING.EXACTLY:
+                rule_names = {WD_LINE_SPACING.SINGLE: "单倍", WD_LINE_SPACING.ONE_POINT_FIVE: "1.5倍",
+                              WD_LINE_SPACING.DOUBLE: "2倍", WD_LINE_SPACING.MULTIPLE: "多倍",
+                              WD_LINE_SPACING.AT_LEAST: "最小值"}
+                old_rule = rule_names.get(pf.line_spacing_rule, "未设置")
+                if pf.line_spacing_rule == WD_LINE_SPACING.MULTIPLE and pf.line_spacing:
+                    old_desc = f"{pf.line_spacing:.2f}倍行距"
+                elif pf.line_spacing_rule in (WD_LINE_SPACING.AT_LEAST,) and pf.line_spacing:
+                    old_desc = f"最小值{pf.line_spacing.pt:.1f}磅"
+                else:
+                    old_desc = old_rule
+                para_descs.append(f"行间距: {old_desc} → 固定值30磅")
                 need_fix = True
             elif pf.line_spacing is None or abs(pf.line_spacing - LINE_SPACING_VAL) > Pt(0.5):
+                old_val = f"固定值{pf.line_spacing.pt:.1f}磅" if pf.line_spacing else "未设置"
+                para_descs.append(f"行间距: {old_val} → 固定值30磅")
                 need_fix = True
             if need_fix:
                 pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
                 pf.line_spacing = LINE_SPACING_VAL
                 fix_count += 1
-                para_fixed = True
             if pf.space_before and pf.space_before > Pt(0):
+                para_descs.append(f"段前: {pf.space_before.pt:.1f}磅 → 0")
                 pf.space_before = Pt(0)
                 fix_count += 1
-                para_fixed = True
             if pf.space_after and pf.space_after > Pt(0):
+                para_descs.append(f"段后: {pf.space_after.pt:.1f}磅 → 0")
                 pf.space_after = Pt(0)
                 fix_count += 1
-                para_fixed = True
 
         if check_align:
             pf = para.paragraph_format
             if pf.alignment is not None and pf.alignment != WD_ALIGN_PARAGRAPH.LEFT:
+                align_names = {WD_ALIGN_PARAGRAPH.CENTER: "居中", WD_ALIGN_PARAGRAPH.RIGHT: "右对齐",
+                               WD_ALIGN_PARAGRAPH.JUSTIFY: "两端对齐", WD_ALIGN_PARAGRAPH.DISTRIBUTE: "分散对齐"}
+                para_descs.append(f"对齐: {align_names.get(pf.alignment, '?')} → 左对齐")
                 pf.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 fix_count += 1
-                para_fixed = True
             if pf.first_line_indent is None or abs(pf.first_line_indent - Pt(28)) > Pt(1):
+                old_indent = f"{pf.first_line_indent.pt:.1f}pt" if pf.first_line_indent else "无"
+                para_descs.append(f"首行缩进: {old_indent} → 2字符")
                 pf.first_line_indent = Pt(28)
                 fix_count += 1
-                para_fixed = True
             if text[0] in (' ', '\u3000'):
+                para_descs.append("删除开头空格")
                 para.runs[0].text = para.runs[0].text.lstrip(' \u3000')
                 fix_count += 1
-                para_fixed = True
 
         if check_punct:
-            # 快速检查是否有英文标点
             if PUNCT_SET & set(text):
                 cleaned = DIGIT_PUNCT_PATTERN.sub('', text)
-                if any(ch in PUNCT_SET for ch in cleaned):
+                en_puncts = [ch for ch in cleaned if ch in PUNCT_SET]
+                if en_puncts:
+                    samples = list(set(en_puncts))[:5]
+                    mapping = ' '.join(f"'{c}'→'{PUNCTUATION_MAP[c]}'" for c in samples)
+                    para_descs.append(f"标点: {mapping}")
                     for run in para.runs:
                         _fix_punctuation_in_run(run)
                     fix_count += 1
-                    para_fixed = True
 
         if kw_items:
             for kw, repl in kw_items:
                 if kw in text:
+                    para_descs.append(f"'{kw}' → '{repl}'")
                     for run in para.runs:
                         if kw in run.text:
                             run.text = run.text.replace(kw, repl)
                     fix_count += 1
                     warn_count += 1
-                    para_fixed = True
 
         if check_font_or_color:
-            fix_count = _process_runs_font_color(para.runs, False, categories, fix_count, details, details_full)
+            fc, font_descs = _process_runs_font_color(para.runs, False, categories)
+            fix_count += fc
+            para_descs.extend(font_descs)
 
-        if para_fixed and details_full:
+        # 加批注（带修改明细）
+        if para_descs and add_comments and comment_count < COMMENT_LIMIT:
+            doc.add_comment(
+                runs=para.runs,
+                text="【已修复】\n" + "\n".join(f"• {d}" for d in para_descs),
+                author=AUTHOR, initials=INITIALS
+            )
+            comment_count += 1
+
+        if para_descs and details_full:
             para_loc = text[:25] + "..." if len(text) > 25 else text
-            details.append((para_loc, "格式修复"))
+            for d in para_descs:
+                details.append((para_loc, d))
             if len(details) >= DETAILS_LIMIT:
                 details_full = False
 
@@ -313,30 +340,44 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
                     for para in cell.paragraphs:
                         if not para.text.strip() or not para.runs:
                             continue
+                        tbl_descs = []
 
                         if check_align:
                             pf = para.paragraph_format
                             if pf.alignment is not None and pf.alignment != WD_ALIGN_PARAGRAPH.LEFT:
+                                align_names = {WD_ALIGN_PARAGRAPH.CENTER: "居中", WD_ALIGN_PARAGRAPH.RIGHT: "右对齐",
+                                               WD_ALIGN_PARAGRAPH.JUSTIFY: "两端对齐"}
+                                tbl_descs.append(f"对齐: {align_names.get(pf.alignment, '?')} → 左对齐")
                                 pf.alignment = WD_ALIGN_PARAGRAPH.LEFT
                                 fix_count += 1
 
                         if check_font_or_color:
-                            fix_count = _process_runs_font_color(para.runs, True, categories, fix_count, details, details_full)
+                            fc, font_descs = _process_runs_font_color(para.runs, True, categories)
+                            fix_count += fc
+                            tbl_descs.extend(font_descs)
 
-    # 批注：大文档只在首段加一条汇总批注
-    if add_comments and fix_count > 0 and first_para and first_para.runs:
-        if fix_count > COMMENT_LIMIT:
-            doc.add_comment(
-                runs=first_para.runs,
-                text=f"【暗标检查工具】共修复 {fix_count} 项格式问题，{warn_count} 项警告。详见修改明细。",
-                author=AUTHOR, initials=INITIALS
-            )
-        else:
-            doc.add_comment(
-                runs=first_para.runs,
-                text=f"【暗标检查工具】共修复 {fix_count} 项格式问题。",
-                author=AUTHOR, initials=INITIALS
-            )
+                        if tbl_descs and add_comments and comment_count < COMMENT_LIMIT:
+                            doc.add_comment(
+                                runs=para.runs,
+                                text="【已修复-表格内】\n" + "\n".join(f"• {d}" for d in tbl_descs),
+                                author=AUTHOR, initials=INITIALS
+                            )
+                            comment_count += 1
+
+                        if tbl_descs and details_full:
+                            para_loc = "[表格内] " + (para.text[:15] + "..." if len(para.text) > 15 else para.text)
+                            for d in tbl_descs:
+                                details.append((para_loc, d))
+                            if len(details) >= DETAILS_LIMIT:
+                                details_full = False
+
+    # 超过批注上限时在首段加汇总
+    if add_comments and comment_count >= COMMENT_LIMIT and first_para and first_para.runs:
+        doc.add_comment(
+            runs=first_para.runs,
+            text=f"【暗标检查工具】修复项过多（共{fix_count}项），仅标注前{COMMENT_LIMIT}处，其余已自动修复。",
+            author=AUTHOR, initials=INITIALS
+        )
 
     if fix_count == 0 and warn_count == 0:
         return details, 0, 0
