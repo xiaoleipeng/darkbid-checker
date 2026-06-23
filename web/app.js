@@ -199,7 +199,16 @@ async function runCheck() {
         const file = fileInput.files[0];
         const arrayBuf = await file.arrayBuffer();
         const uint8 = new Uint8Array(arrayBuf);
-        pyodide.FS.writeFile('/input.docx', uint8);
+        try {
+            pyodide.FS.writeFile('/input.docx', uint8);
+        } catch (e) {
+            throw new Error('文件写入失败，请检查文件是否为有效的 .docx 文件');
+        }
+        // 验证文件写入成功
+        const stat = pyodide.FS.stat('/input.docx');
+        if (stat.size === 0) {
+            throw new Error('文件写入为空，请重新选择文件');
+        }
         setProgress(30);
 
         const categories = [];
@@ -210,9 +219,10 @@ async function runCheck() {
         const addComments = document.getElementById('addComments').checked;
 
         setProgress(50);
+        const startTime = Date.now();
         await pyodide.runPythonAsync(`
 import json
-keyword_map = json.loads('${JSON.stringify(kwMap).replace(/'/g, "\\'")}')
+keyword_map = json.loads('${JSON.stringify(kwMap).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')
 categories = set(json.loads('${JSON.stringify(categories)}'))
 add_comments = ${addComments ? 'True' : 'False'}
 
@@ -234,17 +244,18 @@ result_json = json.dumps({
 
         const resultJson = pyodide.globals.get('result_json');
         const result = JSON.parse(resultJson);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
         setProgress(90);
 
         if (result.fix_count === 0 && result.warn_count === 0) {
-            setStatus('success', '✓ 所有检查通过，文档符合暗标编制要求！');
+            setStatus('success', `✓ 所有检查通过，文档符合暗标编制要求！(${elapsed}s)`);
             showProgress(false);
         } else {
             const outputData = pyodide.FS.readFile('/output.docx');
             resultBlob = new Blob([outputData], {type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
 
-            setStatus('success', `✓ 已修复 ${result.fix_count} 项问题` + (result.warn_count ? `，${result.warn_count} 项警告` : ''));
+            setStatus('success', `✓ 已修复 ${result.fix_count} 项问题` + (result.warn_count ? `，${result.warn_count} 项警告` : '') + ` (${elapsed}s)`);
             document.getElementById('downloadBtn').style.display = 'inline-flex';
             renderResults(result.details);
         }

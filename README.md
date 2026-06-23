@@ -20,7 +20,7 @@ Word投标文件技术标（暗标）格式自动检查与修复工具。
 
 ### 方式一：网页版（推荐）
 
-在线访问：`https://<your-username>.github.io/darkbid-checker/`
+在线访问：https://xiaoleipeng.github.io/darkbid-checker/
 
 - 打开网页即可使用，无需安装任何软件
 - 所有文件仅在浏览器本地处理，**不会上传任何服务器**
@@ -49,7 +49,7 @@ python3 check_word_comment.py 文件.docx --keywords "XX公司,张三"
 ## 安装
 
 ```bash
-git clone https://github.com/<your-username>/darkbid-checker.git
+git clone https://github.com/xiaoleipeng/darkbid-checker.git
 cd darkbid-checker
 pip install -r requirements.txt
 ```
@@ -59,8 +59,10 @@ pip install -r requirements.txt
 ## 部署网页版到 GitHub Pages
 
 1. 将代码推送到 GitHub
-2. Settings → Pages → Source 选 `main` 分支，目录选 `/web`
-3. 等待部署完成，访问 `https://<用户名>.github.io/darkbid-checker/`
+2. Settings → Pages → Source 选 `main` 分支，目录选 `/ (root)`
+3. 等待部署完成，访问 https://xiaoleipeng.github.io/darkbid-checker/
+
+> 根目录的 `index.html` 会自动跳转到 `web/` 目录。
 
 ## 本地开发测试网页版
 
@@ -74,7 +76,8 @@ python3 serve.py
 
 ```
 darkbid-checker/
-├── web/                      # 网页版（可部署到GitHub Pages）
+├── index.html                # 根入口（重定向到web/）
+├── web/                      # 网页版（GitHub Pages实际页面）
 │   ├── index.html            # 页面
 │   ├── app.js                # 前端交互逻辑
 │   ├── checker.py            # Python检查核心（Pyodide中运行）
