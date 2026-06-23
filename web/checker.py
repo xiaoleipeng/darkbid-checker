@@ -242,7 +242,12 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
 
         if check_spacing:
             pf = para.paragraph_format
-            if pf.line_spacing_rule != WD_LINE_SPACING.EXACTLY or pf.line_spacing != LINE_SPACING_VAL:
+            need_fix = False
+            if pf.line_spacing_rule != WD_LINE_SPACING.EXACTLY:
+                need_fix = True
+            elif pf.line_spacing is None or abs(pf.line_spacing - LINE_SPACING_VAL) > Pt(0.5):
+                need_fix = True
+            if need_fix:
                 pf.line_spacing_rule = WD_LINE_SPACING.EXACTLY
                 pf.line_spacing = LINE_SPACING_VAL
                 fix_count += 1
