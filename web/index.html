@@ -277,16 +277,6 @@
         .status.error { display: flex; background: var(--error-bg); color: var(--error); }
         .progress { width: 100%; height: 3px; background: var(--gray-200); border-radius: 2px; margin-top: 12px; overflow: hidden; display: none; }
         .progress-bar { height: 100%; background: linear-gradient(90deg, var(--primary), #8b5cf6); width: 0%; transition: width 0.3s; }
-        .progress-bar.indeterminate {
-            width: 100% !important;
-            background: linear-gradient(90deg, transparent 0%, var(--primary) 30%, #8b5cf6 50%, var(--primary) 70%, transparent 100%);
-            background-size: 200% 100%;
-            animation: indeterminate 1.5s linear infinite;
-        }
-        @keyframes indeterminate {
-            0% { background-position: 100% 0; }
-            100% { background-position: -100% 0; }
-        }
 
         /* 结果表格 */
         .results { margin-top: 20px; }
@@ -427,7 +417,6 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

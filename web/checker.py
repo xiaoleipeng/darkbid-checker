@@ -39,10 +39,8 @@ QN_INSTR = qn('w:instrText')
 QN_TC = qn('w:tc')
 QN_TBL = qn('w:tbl')
 
-# 批注合并阈值：超过此数量的修复不逐条加批注
-COMMENT_LIMIT = 200
-# details 最大条目数
-DETAILS_LIMIT = 500
+# 批注合并阈值（不再限制）
+# details 最大条目数（不再限制）
 
 
 def _set_font_name(run):
@@ -175,7 +173,7 @@ def _process_runs_font_color(runs, in_table, categories):
     return fix_count, fix_descs
 
 
-def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None, add_comments=True):
+def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None, add_comments=True, progress_callback=None):
     """核心修复逻辑，返回 (details, fix_count, warn_count)"""
     ALL_CATEGORIES = {'page', 'spacing', 'align', 'font', 'color', 'punct', 'identity'}
     if categories is None:
@@ -191,7 +189,6 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
     fix_count = 0
     warn_count = 0
     details = []
-    details_full = True  # 当 details 太多时停止记录明细
 
     # 判断段落是否在表格内（通过XML父元素，不用id()）
     def _is_in_table(para):
@@ -270,7 +267,11 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
     # 主循环：逐段处理（跳过表格内段落，后面单独处理）
     comment_count = 0
     total_paras_list = doc.paragraphs
-    for para in total_paras_list:
+    total_para_count = len(total_paras_list)
+    for para_idx, para in enumerate(total_paras_list):
+        if progress_callback and para_idx % 10 == 0:
+            pct = 10 + 70 * para_idx / max(total_para_count, 1)
+            progress_callback(pct, f"正在处理第 {para_idx}/{total_para_count} 段...")
         text = para.text
         if not text.strip() or not para.runs:
             continue
@@ -357,7 +358,7 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
             para_descs.extend(font_descs)
 
         # 加批注（带修改明细）
-        if para_descs and add_comments and comment_count < COMMENT_LIMIT:
+        if para_descs and add_comments:
             doc.add_comment(
                 runs=para.runs,
                 text="【已修复】\n" + "\n".join(f"• {d}" for d in para_descs),
@@ -365,15 +366,15 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
             )
             comment_count += 1
 
-        if para_descs and details_full:
+        if para_descs:
             para_loc = text[:25] + "..." if len(text) > 25 else text
             for d in para_descs:
                 details.append((para_loc, d))
-            if len(details) >= DETAILS_LIMIT:
-                details_full = False
 
     # 表格内段落处理
     if check_font_or_color or check_align:
+        if progress_callback:
+            progress_callback(82, "正在处理表格内容...")
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -396,7 +397,7 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
                             fix_count += fc
                             tbl_descs.extend(font_descs)
 
-                        if tbl_descs and add_comments and comment_count < COMMENT_LIMIT:
+                        if tbl_descs and add_comments:
                             doc.add_comment(
                                 runs=para.runs,
                                 text="【已修复-表格内】\n" + "\n".join(f"• {d}" for d in tbl_descs),
@@ -404,27 +405,16 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
                             )
                             comment_count += 1
 
-                        if tbl_descs and details_full:
+                        if tbl_descs:
                             para_loc = "[表格内] " + (para.text[:15] + "..." if len(para.text) > 15 else para.text)
                             for d in tbl_descs:
                                 details.append((para_loc, d))
-                            if len(details) >= DETAILS_LIMIT:
-                                details_full = False
-
-    # 超过批注上限时在首段加汇总
-    if add_comments and comment_count >= COMMENT_LIMIT and first_para and first_para.runs:
-        doc.add_comment(
-            runs=first_para.runs,
-            text=f"【暗标检查工具】修复项过多（共{fix_count}项），仅标注前{COMMENT_LIMIT}处，其余已自动修复。",
-            author=AUTHOR, initials=INITIALS
-        )
 
     if fix_count == 0 and warn_count == 0:
         return details, 0, 0
 
-    # 截断 details
-    if not details_full:
-        details.append(("...", f"共 {fix_count} 项修复，仅显示前 {DETAILS_LIMIT} 条"))
+    if progress_callback:
+        progress_callback(92, "正在保存文件...")
 
     if isinstance(output_path, str):
         buf = io.BytesIO()

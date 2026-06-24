@@ -1,42 +1,32 @@
-// app.js - Pyodide前端控制逻辑
-let pyodide = null;
+// app.js - 前端控制逻辑（Pyodide 在 Web Worker 中运行）
+let worker = null;
 let resultBlob = null;
 let kwMap = {};
 
-async function initPyodide() {
+function initPyodide() {
     const bar = document.getElementById('loadingBar');
     const text = document.getElementById('loadingText');
     const sub = document.getElementById('loadingSub');
 
-    text.textContent = '正在加载 Pyodide 运行环境...';
-    sub.textContent = '步骤 1/3：下载 WebAssembly 核心';
-    bar.style.width = '10%';
+    worker = new Worker('worker.js');
+    worker.postMessage({type: 'init'});
 
-    pyodide = await loadPyodide();
-    bar.style.width = '40%';
-
-    text.textContent = '正在安装 Python 依赖包...';
-    sub.textContent = '步骤 2/3：安装 python-docx';
-    await pyodide.loadPackage(['micropip']);
-    bar.style.width = '60%';
-
-    await pyodide.runPythonAsync(`
-import micropip
-await micropip.install('python-docx')
-    `);
-    bar.style.width = '85%';
-
-    text.textContent = '正在加载检查脚本...';
-    sub.textContent = '步骤 3/3：初始化完成';
-    const resp = await fetch('checker.py?v=' + Date.now());
-    const code = await resp.text();
-    await pyodide.runPythonAsync(code);
-    bar.style.width = '100%';
-
-    setTimeout(() => {
-        document.getElementById('loading-overlay').classList.add('hidden');
-    }, 300);
-    document.getElementById('runBtn').disabled = false;
+    worker.onmessage = (e) => {
+        const {type} = e.data;
+        if (type === 'loading') {
+            const {step, msg} = e.data;
+            text.textContent = step === 1 ? '正在加载 Pyodide 运行环境...' :
+                               step === 2 ? '正在安装 Python 依赖包...' : '正在加载检查脚本...';
+            sub.textContent = `步骤 ${step}/3：${msg}`;
+            bar.style.width = [0, 30, 60, 90][step] + '%';
+        } else if (type === 'ready') {
+            bar.style.width = '100%';
+            setTimeout(() => {
+                document.getElementById('loading-overlay').classList.add('hidden');
+            }, 300);
+            document.getElementById('runBtn').disabled = false;
+        }
+    };
 }
 
 // 文件选择 - 点击和拖拽
@@ -520,118 +510,115 @@ async function runWordCheck(file) {
     btn.disabled = true;
     setLoading('⏳ 正在处理Word文件...');
     showProgress(true);
-    setProgress(10);
+    setProgress(5);
     document.getElementById('downloadBtn').style.display = 'none';
     document.getElementById('results').innerHTML = '';
+    window._resultFilter = {text: '', type: ''};
 
-    try {
-        // 清理上次残留文件
-        try { pyodide.FS.unlink('/input.docx'); } catch(e) {}
-        try { pyodide.FS.unlink('/output.docx'); } catch(e) {}
+    const startTime = Date.now();
+    const arrayBuf = await file.arrayBuffer();
 
-        const arrayBuf = await file.arrayBuffer();
-        const uint8 = new Uint8Array(new Uint8Array(arrayBuf));
-        if (uint8.length === 0) {
-            throw new Error('文件读取为空，请重新选择文件');
-        }
-        try {
-            pyodide.FS.writeFile('/input.docx', uint8);
-        } catch (e) {
-            throw new Error('文件写入失败，请检查文件是否为有效的 .docx 文件');
-        }
-        // 验证文件写入成功
-        const stat = pyodide.FS.stat('/input.docx');
-        if (stat.size === 0) {
-            throw new Error('文件写入为空，请重新选择文件');
-        }
-        setProgress(30);
+    const categories = [];
+    document.querySelectorAll('.categories input:checked').forEach(cb => categories.push(cb.value));
+    const addComments = document.getElementById('addComments').checked;
 
-        const categories = [];
-        document.querySelectorAll('.categories input:checked').forEach(cb => {
-            categories.push(cb.value);
-        });
+    // 通过 Worker 处理
+    worker.postMessage({
+        type: 'process',
+        fileBuffer: arrayBuf,
+        kwMap,
+        categories,
+        addComments
+    }, [arrayBuf]);
 
-        const addComments = document.getElementById('addComments').checked;
+    // 监听 Worker 返回的进度和结果
+    worker.onmessage = (e) => {
+        const {type} = e.data;
+        if (type === 'progress') {
+            setProgress(e.data.pct);
+        } else if (type === 'done') {
+            const {result, outputBuffer} = e.data;
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            setProgress(100);
 
-        setProgress(40);
-        await new Promise(r => setTimeout(r, 0));
-        const startTime = Date.now();
-
-        // 核心处理会阻塞主线程，切换为不确定进度动画（CSS动画不受阻塞影响）
-        document.getElementById('progressBar').classList.add('indeterminate');
-
-        await pyodide.runPythonAsync(`
-import json
-
-keyword_map = json.loads('${JSON.stringify(kwMap).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}')
-categories = set(json.loads('${JSON.stringify(categories)}'))
-add_comments = ${addComments ? 'True' : 'False'}
-`);
-        await new Promise(r => setTimeout(r, 0));
-
-        await pyodide.runPythonAsync(`
-details, fix_count, warn_count = check_fix_annotate(
-    '/input.docx', '/output.docx',
-    keyword_map=keyword_map if keyword_map else None,
-    categories=categories,
-    add_comments=add_comments
-)
-`);
-
-        // 核心处理完成，恢复确定进度
-        document.getElementById('progressBar').classList.remove('indeterminate');
-        setProgress(85);
-        await new Promise(r => setTimeout(r, 0));
-
-        await pyodide.runPythonAsync(`
-result_json = json.dumps({
-    'fix_count': fix_count,
-    'warn_count': warn_count,
-    'details': details
-}, ensure_ascii=False)
-        `);
-
-        setProgress(80);
-
-        const resultJson = pyodide.globals.get('result_json');
-        const result = JSON.parse(resultJson);
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-
-        setProgress(90);
-
-        if (result.fix_count === 0 && result.warn_count === 0) {
-            setStatus('success', `✓ 所有检查通过，文档符合暗标编制要求！(${elapsed}s)`);
+            if (result.fix_count === 0 && result.warn_count === 0) {
+                setStatus('success', `✓ 所有检查通过，文档符合暗标编制要求！(${elapsed}s)`);
+            } else {
+                resultBlob = new Blob([new Uint8Array(outputBuffer)], {type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+                setStatus('success', `✓ 已修复 ${result.fix_count} 项问题` + (result.warn_count ? `，${result.warn_count} 项警告` : '') + ` (${elapsed}s)`);
+                document.getElementById('downloadBtn').style.display = 'inline-flex';
+                renderResults(result.details);
+            }
+            setTimeout(() => showProgress(false), 500);
+            btn.disabled = false;
+        } else if (type === 'error') {
+            setStatus('error', '❌ 处理失败: ' + e.data.msg);
             showProgress(false);
-        } else {
-            const outputData = pyodide.FS.readFile('/output.docx');
-            resultBlob = new Blob([outputData], {type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
-
-            setStatus('success', `✓ 已修复 ${result.fix_count} 项问题` + (result.warn_count ? `，${result.warn_count} 项警告` : '') + ` (${elapsed}s)`);
-            document.getElementById('downloadBtn').style.display = 'inline-flex';
-            renderResults(result.details);
+            btn.disabled = false;
         }
-        setProgress(100);
-        setTimeout(() => showProgress(false), 500);
-
-    } catch (err) {
-        setStatus('error', '❌ 处理失败: ' + err.message);
-        showProgress(false);
-        console.error(err);
-    }
-
-    btn.disabled = false;
+    };
 }
 
 function renderResults(details, page = 1, pageSize = 50) {
-    if (!details.length) return;
-    window._resultDetails = details;
-    const totalPages = Math.ceil(details.length / pageSize);
-    const start = (page - 1) * pageSize;
-    const end = Math.min(start + pageSize, details.length);
-    const pageItems = details.slice(start, end);
+    if (!details || !details.length) {
+        document.getElementById('results').innerHTML = '';
+        return;
+    }
+    window._resultDetailsAll = details;
+    window._resultFilter = window._resultFilter || {text: '', type: ''};
 
-    let html = `<div class="results-header"><span>共 ${details.length} 项修改明细（第${page}/${totalPages}页，${start+1}-${end}条）</span></div>`;
+    // 筛选
+    const f = window._resultFilter;
+    let filtered = details;
+    if (f.text) {
+        const kw = f.text.toLowerCase();
+        filtered = filtered.filter(([loc, fix]) => loc.toLowerCase().includes(kw) || fix.toLowerCase().includes(kw));
+    }
+    if (f.type) {
+        filtered = filtered.filter(([loc, fix]) => {
+            if (f.type === 'table') return loc.includes('[表格内]');
+            if (f.type === 'page') return loc === '页面设置';
+            if (f.type === 'font') return fix.includes('字体') || fix.includes('字号') || fix.includes('加粗') || fix.includes('倾斜') || fix.includes('下划线');
+            if (f.type === 'color') return fix.includes('颜色');
+            if (f.type === 'spacing') return fix.includes('行间距') || fix.includes('段前') || fix.includes('段后');
+            if (f.type === 'align') return fix.includes('对齐') || fix.includes('缩进') || fix.includes('空格');
+            if (f.type === 'punct') return fix.startsWith('标点');
+            if (f.type === 'identity') return fix.startsWith("'") && fix.includes('→');
+            return true;
+        });
+    }
+    window._resultDetails = filtered;
+
+    const totalPages = Math.ceil(filtered.length / pageSize) || 1;
+    if (page > totalPages) page = 1;
+    const start = (page - 1) * pageSize;
+    const end = Math.min(start + pageSize, filtered.length);
+    const pageItems = filtered.slice(start, end);
+
+    // 筛选栏
+    let html = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <input type="text" id="resultSearch" placeholder="搜索内容..." value="${escHtml(f.text)}"
+            style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:160px"
+            oninput="window._resultFilter.text=this.value;renderResults(window._resultDetailsAll,1)">
+        <select id="resultTypeFilter" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px"
+            onchange="window._resultFilter.type=this.value;renderResults(window._resultDetailsAll,1)">
+            <option value="">全部类型</option>
+            <option value="font" ${f.type==='font'?'selected':''}>字体字号</option>
+            <option value="color" ${f.type==='color'?'selected':''}>颜色</option>
+            <option value="spacing" ${f.type==='spacing'?'selected':''}>行间距/段距</option>
+            <option value="align" ${f.type==='align'?'selected':''}>对齐缩进</option>
+            <option value="punct" ${f.type==='punct'?'selected':''}>标点符号</option>
+            <option value="identity" ${f.type==='identity'?'selected':''}>身份信息</option>
+            <option value="page" ${f.type==='page'?'selected':''}>页面设置</option>
+            <option value="table" ${f.type==='table'?'selected':''}>表格内</option>
+        </select>
+        <span style="font-size:12px;color:#6b7280">${filtered.length === details.length ? `共 ${details.length} 项` : `筛选出 ${filtered.length}/${details.length} 项`}（第${page}/${totalPages}页）</span>
+    </div>`;
+
     html += '<table><thead><tr><th style="width:35%">位置</th><th>修复内容</th></tr></thead><tbody>';
+    if (pageItems.length === 0) {
+        html += '<tr><td colspan="2" style="text-align:center;color:#999;padding:20px">无匹配结果</td></tr>';
+    }
     pageItems.forEach(([loc, fix]) => {
         let locHtml;
         if (loc.includes('[表格内]')) {
@@ -647,19 +634,25 @@ function renderResults(details, page = 1, pageSize = 50) {
 
     if (totalPages > 1) {
         html += '<div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">';
-        html += `<button class="page-btn" onclick="renderResults(window._resultDetails,1)" ${page===1?'disabled':''}>&laquo;</button>`;
-        html += `<button class="page-btn" onclick="renderResults(window._resultDetails,${page-1})" ${page===1?'disabled':''}>‹</button>`;
-        // 显示页码
+        html += `<button class="page-btn" onclick="renderResults(window._resultDetailsAll,1)" ${page===1?'disabled':''}>&laquo;</button>`;
+        html += `<button class="page-btn" onclick="renderResults(window._resultDetailsAll,${page-1})" ${page===1?'disabled':''}>‹</button>`;
         let startP = Math.max(1, page - 2), endP = Math.min(totalPages, page + 2);
         for (let p = startP; p <= endP; p++) {
-            html += `<button class="page-btn${p===page?' active':''}" onclick="renderResults(window._resultDetails,${p})">${p}</button>`;
+            html += `<button class="page-btn${p===page?' active':''}" onclick="renderResults(window._resultDetailsAll,${p})">${p}</button>`;
         }
-        html += `<button class="page-btn" onclick="renderResults(window._resultDetails,${page+1})" ${page===totalPages?'disabled':''}>›</button>`;
-        html += `<button class="page-btn" onclick="renderResults(window._resultDetails,${totalPages})" ${page===totalPages?'disabled':''}>&raquo;</button>`;
+        html += `<button class="page-btn" onclick="renderResults(window._resultDetailsAll,${page+1})" ${page===totalPages?'disabled':''}>›</button>`;
+        html += `<button class="page-btn" onclick="renderResults(window._resultDetailsAll,${totalPages})" ${page===totalPages?'disabled':''}>&raquo;</button>`;
         html += '</div>';
     }
 
     document.getElementById('results').innerHTML = html;
+
+    // 恢复搜索框焦点
+    const searchInput = document.getElementById('resultSearch');
+    if (searchInput && f.text) {
+        searchInput.focus();
+        searchInput.setSelectionRange(f.text.length, f.text.length);
+    }
 }
 
 function downloadResult() {
