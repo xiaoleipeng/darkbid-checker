@@ -273,9 +273,20 @@
         }
         .status.loading { display: flex; background: var(--warning-bg); color: var(--warning); }
         .status.success { display: flex; background: var(--success-bg); color: var(--success); }
+        .status.warning { display: flex; background: var(--warning-bg); color: var(--warning); }
         .status.error { display: flex; background: var(--error-bg); color: var(--error); }
         .progress { width: 100%; height: 3px; background: var(--gray-200); border-radius: 2px; margin-top: 12px; overflow: hidden; display: none; }
         .progress-bar { height: 100%; background: linear-gradient(90deg, var(--primary), #8b5cf6); width: 0%; transition: width 0.3s; }
+        .progress-bar.indeterminate {
+            width: 100% !important;
+            background: linear-gradient(90deg, transparent 0%, var(--primary) 30%, #8b5cf6 50%, var(--primary) 70%, transparent 100%);
+            background-size: 200% 100%;
+            animation: indeterminate 1.5s linear infinite;
+        }
+        @keyframes indeterminate {
+            0% { background-position: 100% 0; }
+            100% { background-position: -100% 0; }
+        }
 
         /* 结果表格 */
         .results { margin-top: 20px; }
@@ -301,6 +312,18 @@
         }
         .results .tag-table { background: #fff7ed; color: #c2410c; }
         .results .tag-page { background: #eff6ff; color: #1d4ed8; }
+        .page-btn {
+            padding: 4px 10px;
+            border: 1px solid var(--gray-300);
+            border-radius: 4px;
+            background: #fff;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.15s;
+        }
+        .page-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+        .page-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+        .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
         /* 加载遮罩 */
         #loading-overlay {
@@ -354,12 +377,12 @@
 
         <div class="body">
             <div class="section">
-                <div class="section-title">📁 选择Word文件</div>
+                <div class="section-title">📁 选择文件（Word 或 PDF）</div>
                 <div class="file-drop" id="fileDrop">
                     <div class="icon">📎</div>
-                    <div class="text">拖拽文件到此处，或 <strong>点击选择</strong></div>
+                    <div class="text">拖拽文件到此处，或 <strong>点击选择</strong>（支持 .docx / .pdf）</div>
                     <div class="file-name" id="fileName"></div>
-                    <input type="file" id="fileInput" accept=".docx">
+                    <input type="file" id="fileInput" accept=".docx,.pdf">
                 </div>
             </div>
 

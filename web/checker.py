@@ -193,13 +193,14 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
     details = []
     details_full = True  # 当 details 太多时停止记录明细
 
-    # 收集表格内所有 paragraph 元素的 id，用于快速判断
-    table_para_ids = set()
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
-                    table_para_ids.add(id(para))
+    # 判断段落是否在表格内（通过XML父元素，不用id()）
+    def _is_in_table(para):
+        parent = para._element.getparent()
+        while parent is not None:
+            if parent.tag.endswith('}tc') or parent.tag.endswith('}tbl'):
+                return True
+            parent = parent.getparent()
+        return False
 
     first_para = doc.paragraphs[0] if doc.paragraphs else None
 
@@ -268,12 +269,13 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
 
     # 主循环：逐段处理（跳过表格内段落，后面单独处理）
     comment_count = 0
-    for para in doc.paragraphs:
+    total_paras_list = doc.paragraphs
+    for para in total_paras_list:
         text = para.text
         if not text.strip() or not para.runs:
             continue
 
-        in_table = id(para) in table_para_ids
+        in_table = _is_in_table(para)
         if in_table:
             continue  # 表格内段落在下面统一处理
 
