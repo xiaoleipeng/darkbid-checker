@@ -1,1 +1,9 @@
-.marscode/
+__pycache__/
+*.pyc
+.~*.docx
+ce.docx
+测试*.docx
+测试*.pdf
+*_已修正*.docx
+*_已修复*.docx
+*_已修复*.pdf
