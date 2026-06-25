@@ -71,7 +71,7 @@ PUNCTUATION_MAP = {
     '!': '！', '?': '？', '(': '（', ')': '）',
     '[': '【', ']': '】',
 }
-DIGIT_PUNCT_PATTERN = re.compile(r'\d[.,]\d')
+DIGIT_PUNCT_PATTERN = re.compile(r'[a-zA-Z0-9]+([.,][a-zA-Z0-9]+)+')
 
 
 def _is_in_table(paragraph):
@@ -105,12 +105,13 @@ def _fix_punctuation_in_run(run):
     result = []
     for i, ch in enumerate(text):
         if ch in PUNCTUATION_MAP:
-            before_digit = i > 0 and text[i-1].isdigit()
-            after_digit = i < len(text)-1 and text[i+1].isdigit()
-            if before_digit and after_digit and ch in '.,':
-                result.append(ch)
-            else:
-                result.append(PUNCTUATION_MAP[ch])
+            if ch in '.,':
+                before_alnum = i > 0 and (text[i-1].isdigit() or text[i-1].isalpha())
+                after_alnum = i < len(text)-1 and (text[i+1].isdigit() or text[i+1].isalpha())
+                if before_alnum and after_alnum:
+                    result.append(ch)
+                    continue
+            result.append(PUNCTUATION_MAP[ch])
         else:
             result.append(ch)
     run.text = ''.join(result)

@@ -29,7 +29,12 @@ PUNCTUATION_MAP = {
     '[': '【', ']': '】',
 }
 PUNCT_SET = set(PUNCTUATION_MAP.keys())
-DIGIT_PUNCT_PATTERN = re.compile(r'\d[.,]\d')
+DIGIT_PUNCT_PATTERN = re.compile(r'[a-zA-Z0-9]+([.,][a-zA-Z0-9]+)+')
+
+
+def _clean_alnum_punct(text):
+    """删除字母数字间用.,连接的整段序列（如1.3.5.8、report.docx、www.example.com）"""
+    return DIGIT_PUNCT_PATTERN.sub('', text)
 
 # 预计算 qn 值避免重复调用
 QN_WPR = qn('w:rPr')
@@ -64,9 +69,10 @@ def _fix_punctuation_in_run(run):
     for i, ch in enumerate(text):
         if ch in PUNCTUATION_MAP:
             if ch in '.,':
-                before_digit = i > 0 and text[i-1].isdigit()
-                after_digit = i < len(text)-1 and text[i+1].isdigit()
-                if before_digit and after_digit:
+                # 前后有字母或数字时保留（数字小数、版本号、文件名、网址、带单位数字等）
+                before_alnum = i > 0 and (text[i-1].isdigit() or text[i-1].isalpha())
+                after_alnum = i < len(text)-1 and (text[i+1].isdigit() or text[i+1].isalpha())
+                if before_alnum and after_alnum:
                     result.append(ch)
                     continue
             result.append(PUNCTUATION_MAP[ch])
@@ -332,7 +338,7 @@ def check_fix_annotate(doc_path, output_path, keyword_map=None, categories=None,
 
         if check_punct:
             if PUNCT_SET & set(text):
-                cleaned = DIGIT_PUNCT_PATTERN.sub('', text)
+                cleaned = _clean_alnum_punct(text)
                 en_puncts = [ch for ch in cleaned if ch in PUNCT_SET]
                 if en_puncts:
                     samples = list(set(en_puncts))[:5]

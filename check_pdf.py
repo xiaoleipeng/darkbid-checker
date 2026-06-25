@@ -44,7 +44,7 @@ PUNCTUATION_MAP = {
     '[': '【', ']': '】',
 }
 PUNCTUATION_EN = set(PUNCTUATION_MAP.keys())
-DIGIT_PUNCT_PATTERN = re.compile(r'\d[.,]\d')
+DIGIT_PUNCT_PATTERN = re.compile(r'[a-zA-Z0-9]+([.,][a-zA-Z0-9]+)+')
 
 ALL_CATEGORIES = {'page', 'spacing', 'align', 'font', 'color', 'punct', 'identity'}
 # --fix 模式能修复的类别
